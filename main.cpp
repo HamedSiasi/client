@@ -1,421 +1,290 @@
 /*
- * Copyright (c) 2015, 2016 ARM Limited. All rights reserved.
- * SPDX-License-Identifier: Apache-2.0
- * Licensed under the Apache License, Version 2.0 (the License); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ * Copyright (C) u-blox Melbourn Ltd
+ * u-blox Melbourn Ltd, Melbourn, UK
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an AS IS BASIS, WITHOUT
- * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * All rights reserved.
+ *
+ * This source file is the sole property of u-blox Melbourn Ltd.
+ * Reproduction or utilisation of this source in whole or part is
+ * forbidden without the written consent of u-blox Melbourn Ltd.
+ * hamed.siasi@u-blox.com
+ *
  */
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
+
+
+//#define debug
+#ifndef debug
+
 #include "simpleclient.h"
-#include <string>
-#include <sstream>
-#include <vector>
-#include "mbed-trace/mbed_trace.h"
-#include "mbedtls/entropy_poll.h"
-
-#include "security.h"
-
 #include "mbed.h"
+#include "CellInterface.h"
 
-// easy-connect compliancy, it has 2 sets of wifi pins we have only one
-#define MBED_CONF_APP_ESP8266_TX MBED_CONF_APP_WIFI_TX
-#define MBED_CONF_APP_ESP8266_RX MBED_CONF_APP_WIFI_RX
-#include "easy-connect/easy-connect.h"
+//#define MBED_SERVER_ADDRESS  "coap://api.connector.mbed.com:5684"
+//#define MBED_SERVER_ADDRESS  "coap://169.45.82.18:5684"            // ARM LwM2M server
+//#define MBED_SERVER_ADDRESS  "coap://151.9.34.90:5683"             // Sgonico CoAP echo server
+//#define MBED_SERVER_ADDRESS  "coap://151.9.34.99:8080"             // Junaid Ashraf
+//#define MBED_SERVER_ADDRESS    "coap://195.46.10.19:9005"            // ZELITRON LwM2M server  Newbury OpenLAB
+//#define MBED_SERVER_ADDRESS  "coap://192.168.5.80:9005"            // ZELITRON Server VIP (Load balancer )
+#define MBED_SERVER_ADDRESS    "coap://120.16.45.6:41000"            // Neul ecco server
 
-// Status indication
-DigitalOut red_led(LED1);
-DigitalOut green_led(LED2);
-DigitalOut blue_led(LED3);
-Ticker status_ticker;
-void blinky() {
-    green_led = !green_led;
 
-}
 
-// These are example resource values for the Device Object
-struct MbedClientDevice device = {
+#define SIMPIN      NULL                //  NULL
+#define APN         "m2m.zelitron.com"  //  "giffgaff.com"
+#define USERNAME    "web"               //  "giffgaff"
+#define PASSWORD    "web"               //  NULL
+
+__attribute__((section("AHBSRAM0"))) DigitalOut myled(LED1);
+
+MbedClientDevice device = {
     "Manufacturer_String",      // Manufacturer
     "Type_String",              // Type
     "ModelNumber_String",       // ModelNumber
     "SerialNumber_String"       // SerialNumber
 };
 
-// Instantiate the class which implements LWM2M Client API (from simpleclient.h)
-MbedClient mbed_client(device);
+
+__attribute__((section("AHBSRAM0"))) MbedClient  mbed_client(device);
 
 
-// In case of K64F board , there is button resource available
-// to change resource value and unregister
-#ifdef TARGET_K64F
-// Set up Hardware interrupt button.
-InterruptIn obs_button(SW2);
-InterruptIn unreg_button(SW3);
-#else
-//In non K64F boards , set up a timer to simulate updating resource,
-// there is no functionality to unregister.
-Ticker timer;
-#endif
-
-/*
- * Arguments for running "blink" in it's own thread.
- */
-class BlinkArgs {
+class TempResource {
 public:
-    BlinkArgs() {
-        clear();
+
+    TempResource() {
+        // (1) Obj
+        temp_object = M2MInterfaceFactory::create_object("3303");
+
+        // (2) Instance
+        M2MObjectInstance* temp_inst = temp_object->create_object_instance();
+
+        // (3) Resouce
+        M2MResource* status_res = temp_inst->create_dynamic_resource(
+        		"5700"                                /*resource_name*/,
+        		NULL                                  /*resource_type*/,
+				M2MResourceInstance::STRING           /*type*/,
+				false                                  /*observable*/
+				                                      /*multiple_instance*/);
+
+        // (4) Read(GET) and Write(PUT)
+        status_res->set_operation(M2MBase::GET_ALLOWED);
+
+        // (5) Value of the resource
+        status_res->set_value((const uint8_t*)"20.5" /*value*/, (const uint32_t) sizeof("20.5") /*value_length*/);
+
+        // (6) Callback
+        status_res->set_execute_function( execute_callback(this, &TempResource::Handling) );
+
+        // (7) Delay
+        status_res->set_delayed_response(true);
     }
-    void clear() {
-        position = 0;
-        blink_pattern.clear();
+    M2MObject* get_object() {
+        return temp_object;
     }
-    uint16_t position;
-    std::vector<uint32_t> blink_pattern;
+    void Handling(void *argument) {
+    	printf("Temperature Sensor Handling ! %s \r\n\n\n\n\n\n\n", (char*)argument );
+    }
+private:
+    M2MObject* temp_object;
 };
 
-/*
- * The Led contains one property (pattern) and a function (blink).
- * When the function blink is executed, the pattern is read, and the LED
- * will blink based on the pattern.
- */
-class LedResource {
+
+class ServerObj {
 public:
-    LedResource() {
-        // create ObjectID with metadata tag of '3201', which is 'digital output'
-        led_object = M2MInterfaceFactory::create_object("3201");
-        M2MObjectInstance* led_inst = led_object->create_object_instance();
 
-        // 5853 = Multi-state output
-        M2MResource* pattern_res = led_inst->create_dynamic_resource("5853", "Pattern",
-            M2MResourceInstance::STRING, false);
-        // read and write
-        pattern_res->set_operation(M2MBase::GET_PUT_ALLOWED);
-        // set initial pattern (toggle every 200ms. 7 toggles in total)
-        pattern_res->set_value((const uint8_t*)"500:500:500:500:500:500:500", 27);
+	ServerObj() {
+        // (1) Obj
+        server_object = M2MInterfaceFactory::create_object("1");//3303
 
-        // there's not really an execute LWM2M ID that matches... hmm...
-        M2MResource* led_res = led_inst->create_dynamic_resource("5850", "Blink",
-            M2MResourceInstance::OPAQUE, false);
-        // we allow executing a function here...
-        led_res->set_operation(M2MBase::POST_ALLOWED);
-        // when a POST comes in, we want to execute the led_execute_callback
-        led_res->set_execute_function(execute_callback(this, &LedResource::blink));
-        // Completion of execute function can take a time, that's why delayed response is used
-        led_res->set_delayed_response(true);
-        blink_args = new BlinkArgs();
+        // (2) Instance
+        M2MObjectInstance* server_inst = server_object->create_object_instance();
+
+        // (3) Resouce
+        M2MResource* status_res = server_inst->create_dynamic_resource(
+        		"1"                                /*resource_name*/,//5700
+        		NULL                               /*resource_type*/,
+				M2MResourceInstance::STRING         /*type*/,
+				false                               /*observable*/
+				                                   /*multiple_instance*/);
+        // (4) Read(GET) and Write(PUT)
+        status_res->set_operation(M2MBase::GET_PUT_POST_DELETE_ALLOWED);//GET_ALLOWED
+
+        // (5) Value of the resource
+        status_res->set_value((const uint8_t*)"300" /*value*/, (const uint32_t) sizeof("300") /*value_length*/);//20.5
+
+        // (6) Callback
+        status_res->set_execute_function( execute_callback(this, &ServerObj::Handling) );
+
+        // (7) Delay
+        status_res->set_delayed_response(true);
     }
-
-    ~LedResource() {
-        delete blink_args;
-    }
-
+	~ServerObj() {
+	    }
     M2MObject* get_object() {
-        return led_object;
+        return server_object;
     }
+    void Handling(void *argument) {
 
-    void blink(void *argument) {
-        // read the value of 'Pattern'
-        status_ticker.detach();
-        green_led = 1;
+    	if (argument) {
+    		printf("Handling!\r\n");
+    	    M2MResource::M2MExecuteParameter* param = (M2MResource::M2MExecuteParameter*)argument;
+    	    String    object_name          = param->get_argument_object_name();
+    	    uint16_t  object_instance_id   = param->get_argument_object_instance_id();
+    	    String    resource_name        = param->get_argument_resource_name();
+    	    int       payload_length       = param->get_argument_value_length();
+    	    uint8_t*  payload              = param->get_argument_value();
 
-        M2MObjectInstance* inst = led_object->object_instance();
-        M2MResource* res = inst->resource("5853");
-        // Clear previous blink data
-        blink_args->clear();
+    	    printf("Resource: %s/%d/%s executed\r\n", object_name.c_str(), object_instance_id, resource_name.c_str());
+    	    printf("Payload: %.*s\r\n\n\n\n", payload_length, payload);
+    	}
+    	else{
+    		printf("Handling! No argument \r\n");
+    	}
 
-        // values in mbed Client are all buffers, and we need a vector of int's
-        uint8_t* buffIn = NULL;
-        uint32_t sizeIn;
-        res->get_value(buffIn, sizeIn);
-
-        // turn the buffer into a string, and initialize a vector<int> on the heap
-        std::string s((char*)buffIn, sizeIn);
-        free(buffIn);
-        printf("led_execute_callback pattern=%s\n", s.c_str());
-
-        // our pattern is something like 500:200:500, so parse that
-        std::size_t found = s.find_first_of(":");
-        while (found!=std::string::npos) {
-            blink_args->blink_pattern.push_back(atoi((const char*)s.substr(0,found).c_str()));
-            s = s.substr(found+1);
-            found=s.find_first_of(":");
-            if(found == std::string::npos) {
-                blink_args->blink_pattern.push_back(atoi((const char*)s.c_str()));
-            }
-        }
-        // check if POST contains payload
-        if (argument) {
-            M2MResource::M2MExecuteParameter* param = (M2MResource::M2MExecuteParameter*)argument;
-            String object_name = param->get_argument_object_name();
-            uint16_t object_instance_id = param->get_argument_object_instance_id();
-            String resource_name = param->get_argument_resource_name();
-            int payload_length = param->get_argument_value_length();
-            uint8_t* payload = param->get_argument_value();
-            printf("Resource: %s/%d/%s executed\n", object_name.c_str(), object_instance_id, resource_name.c_str());
-            printf("Payload: %.*s\n", payload_length, payload);
-        }
-        // do_blink is called with the vector, and starting at -1
-        blinky_thread.start(callback(this, &LedResource::do_blink));
     }
 
 private:
-    M2MObject* led_object;
-    Thread blinky_thread;
-    BlinkArgs *blink_args;
-    void do_blink() {
-        for (;;) {
-            // blink the LED
-            red_led = !red_led;
-            // up the position, if we reached the end of the vector
-            if (blink_args->position >= blink_args->blink_pattern.size()) {
-                // send delayed response after blink is done
-                M2MObjectInstance* inst = led_object->object_instance();
-                M2MResource* led_res = inst->resource("5850");
-                led_res->send_delayed_post_response();
-                red_led = 1;
-                status_ticker.attach_us(blinky, 250000);
-                return;
-            }
-            // Wait requested time, then continue prosessing the blink pattern from next position.
-            Thread::wait(blink_args->blink_pattern.at(blink_args->position));
-            blink_args->position++;
-        }
-    }
+    M2MObject* server_object;
 };
 
-/*
- * The button contains one property (click count).
- * When `handle_button_click` is executed, the counter updates.
- */
-class ButtonResource {
-public:
-    ButtonResource(): counter(0) {
-        // create ObjectID with metadata tag of '3200', which is 'digital input'
-        btn_object = M2MInterfaceFactory::create_object("3200");
-        M2MObjectInstance* btn_inst = btn_object->create_object_instance();
-        // create resource with ID '5501', which is digital input counter
-        M2MResource* btn_res = btn_inst->create_dynamic_resource("5501", "Button",
-            M2MResourceInstance::INTEGER, true /* observable */);
-        // we can read this value
-        btn_res->set_operation(M2MBase::GET_ALLOWED);
-        // set initial value (all values in mbed Client are buffers)
-        // to be able to read this data easily in the Connector console, we'll use a string
-        btn_res->set_value((uint8_t*)"0", 1);
-    }
 
-    ~ButtonResource() {
-    }
 
-    M2MObject* get_object() {
-        return btn_object;
-    }
-
-    /*
-     * When you press the button, we read the current value of the click counter
-     * from mbed Device Connector, then up the value with one.
-     */
-    void handle_button_click() {
-        if (mbed_client.register_successful()) {
-            M2MObjectInstance* inst = btn_object->object_instance();
-            M2MResource* res = inst->resource("5501");
-
-            // up counter
-            counter++;
-    #ifdef TARGET_K64F
-            printf("handle_button_click, new value of counter is %d\n", counter);
-    #else
-            printf("simulate button_click, new value of counter is %d\n", counter);
-    #endif
-            // serialize the value of counter as a string, and tell connector
-            char buffer[20];
-            int size = sprintf(buffer,"%d",counter);
-            res->set_value((uint8_t*)buffer, size);
-        } else {
-            printf("simulate button_click, device not registered\n");
-        }
-    }
-
-private:
-    M2MObject* btn_object;
-    uint16_t counter;
-};
-
-class BigPayloadResource {
-public:
-    BigPayloadResource() {
-        big_payload = M2MInterfaceFactory::create_object("1000");
-        M2MObjectInstance* payload_inst = big_payload->create_object_instance();
-        M2MResource* payload_res = payload_inst->create_dynamic_resource("1", "BigData",
-            M2MResourceInstance::STRING, true /* observable */);
-        payload_res->set_operation(M2MBase::GET_PUT_ALLOWED);
-        payload_res->set_value((uint8_t*)"0", 1);
-        payload_res->set_incoming_block_message_callback(
-                    incoming_block_message_callback(this, &BigPayloadResource::block_message_received));
-        payload_res->set_outgoing_block_message_callback(
-                    outgoing_block_message_callback(this, &BigPayloadResource::block_message_requested));
-    }
-
-    M2MObject* get_object() {
-        return big_payload;
-    }
-
-    void block_message_received(M2MBlockMessage *argument) {
-        if (argument) {
-            if (M2MBlockMessage::ErrorNone == argument->error_code()) {
-                if (argument->is_last_block()) {
-                    printf("Last block received\n");
-                }
-                printf("Block number: %d\n", argument->block_number());
-                // First block received
-                if (argument->block_number() == 0) {
-                    // Store block
-                // More blocks coming
-                } else {
-                    // Store blocks
-                }
-            } else {
-                printf("Error when receiving block message!  - EntityTooLarge\n");
-            }
-            printf("Total message size: %" PRIu32 "\n", argument->total_message_size());
-        }
-    }
-
-    void block_message_requested(const String& resource, uint8_t *&/*data*/, uint32_t &/*len*/) {
-        printf("GET request received for resource: %s\n", resource.c_str());
-        // Copy data and length to coap response
-    }
-
-private:
-    M2MObject*  big_payload;
-};
-
-// Network interaction must be performed outside of interrupt context
-Semaphore updates(0);
-volatile bool registered = false;
-volatile bool clicked = false;
-osThreadId mainThread;
-
-void unregister() {
-    registered = false;
-    updates.release();
-}
-
-void button_clicked() {
-    clicked = true;
-    updates.release();
-}
-
-// Entry point to the program
 int main() {
+    NetworkInterface *network_interface = 0;
+    wait_ms(3000);
+    CellInterface cell;
+    cell.connect(APN, USERNAME, PASSWORD);
+    network_interface = &cell;
 
-    unsigned int seed;
-    size_t len;
+    // -------------------- CoAP + LwM2M --------------------
 
-#ifdef MBEDTLS_ENTROPY_HARDWARE_ALT
-    // Used to randomize source port
-    mbedtls_hardware_poll(NULL, (unsigned char *) &seed, sizeof seed, &len);
+    mbed_client.create_interface(MBED_SERVER_ADDRESS, network_interface);
+    M2MSecurity* securityObject  = mbed_client.create_register_object();
+    M2MDevice*   device_object   = mbed_client.create_device_object();
 
-#elif defined MBEDTLS_TEST_NULL_ENTROPY
-
-#warning "mbedTLS security feature is disabled. Connection will not be secure !! Implement proper hardware entropy for your selected hardware."
-    // Used to randomize source port
-    mbedtls_null_entropy_poll( NULL,(unsigned char *) &seed, sizeof seed, &len);
-
-#else
-
-#error "This hardware does not have entropy, endpoint will not register to Connector.\
-You need to enable NULL ENTROPY for your application, but if this configuration change is made then no security is offered by mbed TLS.\
-Add MBEDTLS_NO_DEFAULT_ENTROPY_SOURCES and MBEDTLS_TEST_NULL_ENTROPY in mbed_app.json macros to register your endpoint."
-
-#endif
-
-    srand(seed);
-    red_led = 1;
-    blue_led = 1;
-
-    status_ticker.attach_us(blinky, 250000);
-    // Keep track of the main thread
-    mainThread = osThreadGetId();
-
-    printf("\nStarting mbed Client example in ");
-#if defined (MESH) || (MBED_CONF_LWIP_IPV6_ENABLED==true)
-    printf("IPv6 mode\n");
-#else
-    printf("IPv4 mode\n");
-#endif
-
-    mbed_trace_init();
-
-    NetworkInterface* network = easy_connect(true);
-    if(network == NULL) {
-        printf("\nConnection to Network Failed - exiting application...\n");
-        return -1;
-    }
-
-    // we create our button and LED resources
-    ButtonResource button_resource;
-    LedResource led_resource;
-    BigPayloadResource big_payload_resource;
-
-#ifdef TARGET_K64F
-    // On press of SW3 button on K64F board, example application
-    // will call unregister API towards mbed Device Connector
-    //unreg_button.fall(&mbed_client,&MbedClient::test_unregister);
-    unreg_button.fall(&unregister);
-
-    // Observation Button (SW2) press will send update of endpoint resource values to connector
-    obs_button.fall(&button_clicked);
-#else
-    // Send update of endpoint resource values to connector every 15 seconds periodically
-    timer.attach(&button_clicked, 15.0);
-#endif
-
-    // Create endpoint interface to manage register and unregister
-    mbed_client.create_interface(MBED_SERVER_ADDRESS, network);
-
-    // Create Objects of varying types, see simpleclient.h for more details on implementation.
-    M2MSecurity* register_object = mbed_client.create_register_object(); // server object specifying connector info
-    M2MDevice*   device_object   = mbed_client.create_device_object();   // device resources object
-
-    // Create list of Objects to register
+    // OBJECTS LIST:
     M2MObjectList object_list;
+    TempResource temp_resource;
+    //ServerObj    server_resource;
 
-    // Add objects to list
-    object_list.push_back(device_object);
-    object_list.push_back(button_resource.get_object());
-    object_list.push_back(led_resource.get_object());
-    object_list.push_back(big_payload_resource.get_object());
+    object_list.push_back(device_object);                     // obj 3
+    object_list.push_back(temp_resource.get_object());        // obj 3303
+    //object_list.push_back(server_resource.get_object());
 
-    // Set endpoint registration object
-    mbed_client.set_register_object(register_object);
+    mbed_client.set_register_object(securityObject);
+    mbed_client.test_register(securityObject, object_list);
 
-    // Register with mbed Device Connector
-    mbed_client.test_register(register_object, object_list);
-    registered = true;
+    while(true)
+    {
+    	myled = 1;
+    	wait_ms(25000);  // 25sec
+    	myled = 0;
 
-    while (true) {
-        updates.wait(25000);
-        if(registered) {
-            if(!clicked) {
-                mbed_client.test_update_register();
-            }
-        }else {
-            break;
-        }
-        if(clicked) {
-            clicked = false;
-            button_resource.handle_button_click();
-        }
+    	mbed_client.test_update_register();
     }
+
 
     mbed_client.test_unregister();
-    status_ticker.detach();
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+#else
+
+#include "mbed.h"
+
+DigitalOut myled(LED1);
+
+int main() {
+    // open the PC serial port and (use the same baudrate)
+//    Serial pc (USBTX, USBRX);
+//    pc.baud (9600);
+//    pc.set_flow_control (SerialBase::Disabled, NC, NC);
+
+    while(1) {
+    	printf("test \r\n");
+        myled = 1;
+        wait(2);
+        myled = 0;
+        wait(2);
+    }
+}
+
+
+
+//#include "mbed.h"
+//#include "GPS.h"
+//#include "MDM.h"
+//
+//#define SIMPIN      NULL
+//#define APN         "giffgaff.com"
+//#define USERNAME    "giffgaff"
+//#define PASSWORD    NULL
+//
+//int main(void)
+//{
+//    int ret;
+//    char buf[512] = "";
+//
+//    // Create the modem object
+//    MDMSerial mdm; // use mdm(D1,D0) if you connect the cellular shield to a C027
+//    mdm.setDebug(4); // enable this for debugging issues
+//
+//    // initialize the modem
+//    MDMParser::DevStatus devStatus = {};
+//    MDMParser::NetStatus netStatus = {};
+//    bool mdmOk = mdm.init(SIMPIN, &devStatus);
+//    mdm.dumpDevStatus(&devStatus);
+//    if (mdmOk) {
+//        // wait until we are connected
+//        mdmOk = mdm.registerNet(&netStatus);
+//        mdm.dumpNetStatus(&netStatus);
+//    }
+//    if (mdmOk)
+//    {
+//        // join the internet connection
+//        MDMParser::IP ip = mdm.join(APN,USERNAME,PASSWORD);
+//        if (ip == NOIP)
+//            printf("Not able to join network");
+//        else
+//        {
+//            mdm.dumpIp(ip);
+//            int port = 5683;
+//            const char* host = "ciot.it-sgn.u-blox.com";
+//            MDMParser::IP ip = mdm.gethostbyname(host);
+//            char data[] = "UDP SOCKET TEST";
+//
+//                    printf("Testing UDP sockets with ECHO server\r\n");
+//                    int socket = mdm.socketSocket(MDMParser::IPPROTO_UDP, port);
+//                    if (socket >= 0)
+//                    {
+//                        mdm.socketSetBlocking(socket, 10000);
+//                        ret = mdm.socketSendTo(socket, ip, port, data, sizeof(data)-1);
+//                        if (ret == sizeof(data)-1) {
+//                            printf("Socket SendTo %s:%d " IPSTR " %d \"%s\"\r\n", host, port, IPNUM(ip), ret, data);
+//                        }
+//                        ret = mdm.socketRecvFrom(socket, &ip, &port, buf, sizeof(buf)-1);
+//                        if (ret >= 0) {
+//                            printf("Socket RecvFrom " IPSTR ":%d %d \"%.*s\" \r\n", IPNUM(ip),port, ret, ret,buf);
+//                        }
+//                        mdm.socketFree(socket);
+//                    }
+//            // disconnect
+//            mdm.disconnect();
+//        }
+//    }
+//    mdm.powerOff();
+//    return 0;
+//}
+
+#endif
