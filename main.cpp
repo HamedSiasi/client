@@ -24,7 +24,7 @@
 //#define MBED_SERVER_ADDRESS  "coap://169.45.82.18:5684"            // ARM LwM2M server
 //#define MBED_SERVER_ADDRESS  "coap://151.9.34.90:5683"             // Sgonico CoAP echo server
 //#define MBED_SERVER_ADDRESS  "coap://151.9.34.99:8080"             // Junaid Ashraf
-//#define MBED_SERVER_ADDRESS    "coap://195.46.10.19:9005"            // ZELITRON LwM2M server  Newbury OpenLAB
+//#define MBED_SERVER_ADDRESS  "coap://195.46.10.19:9005"            // ZELITRON LwM2M server  Newbury OpenLAB
 //#define MBED_SERVER_ADDRESS  "coap://192.168.5.80:9005"            // ZELITRON Server VIP (Load balancer )
 #define MBED_SERVER_ADDRESS    "coap://120.16.45.6:41000"            // Neul ecco server
 
@@ -152,32 +152,61 @@ private:
 int main() {
     NetworkInterface *network_interface = 0;
     wait_ms(3000);
+
     CellInterface cell;
-    cell.connect(APN, USERNAME, PASSWORD);
+    cell.connect();
     network_interface = &cell;
 
-    // -------------------- CoAP + LwM2M --------------------
 
+
+
+    /*** Create endpoint interface to manage register and unregister ***/
     mbed_client.create_interface(MBED_SERVER_ADDRESS, network_interface);
+
+
+
+
+
+    /*** Create Objects of varying types, see simpleclient.h for more details on implementation. ***/
     M2MSecurity* securityObject  = mbed_client.create_register_object();
     M2MDevice*   device_object   = mbed_client.create_device_object();
 
-    // OBJECTS LIST:
+
+
+
+
+    /*** Create list of Objects to register ***/
     M2MObjectList object_list;
-    TempResource temp_resource;
+    TempResource  temp_resource;
     //ServerObj    server_resource;
 
+
+
+
+
+    /*** Add objects to list ***/
     object_list.push_back(device_object);                     // obj 3
     object_list.push_back(temp_resource.get_object());        // obj 3303
     //object_list.push_back(server_resource.get_object());
 
+
+
+
+    /*** Set endpoint registration object ***/
     mbed_client.set_register_object(securityObject);
+
+
+
+
+    /*** Register ***/
     mbed_client.test_register(securityObject, object_list);
 
-    while(true)
-    {
+
+
+
+    while(true){
     	myled = 1;
-    	wait_ms(25000);  // 25sec
+    	wait_ms(2000000);  // 25sec
     	myled = 0;
 
     	mbed_client.test_update_register();

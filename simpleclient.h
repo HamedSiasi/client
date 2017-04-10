@@ -27,10 +27,10 @@
 #include "mbed.h"
 
 
-M2MInterface::BindingMode SOCKET_MODE = M2MInterface::UDP_QUEUE;
+M2MInterface::BindingMode SOCKET_MODE = M2MInterface::UDP;//UDP_QUEUE;
 
 
-struct __attribute__((section("AHBSRAM1"))) MbedClientDevice {
+struct MbedClientDevice {
     const char* Manufacturer;
     const char* Type;
     const char* ModelNumber;
@@ -44,7 +44,8 @@ struct __attribute__((section("AHBSRAM1"))) MbedClientDevice {
 class MbedClient: public M2MInterfaceObserver {
 public:
 
-	// (1) DEVICE OBJECT 3
+
+	// (1) constructor for MbedClient object, initialize private variables
     MbedClient(struct MbedClientDevice device) {
         _interface = NULL;
         _bootstrapped = false;
@@ -59,7 +60,8 @@ public:
 
 
 
-    // (2)
+
+    // (2) de-constructor for MbedClient object, you can ignore this
     ~MbedClient() {
         if(_interface) {
             delete _interface;
@@ -71,7 +73,7 @@ public:
 
 
 
-    // (3)
+    // (3) debug printf function
     void trace_printer(const char* str) {
         printf("\r\n%s\r\n", str);
     }
@@ -87,20 +89,22 @@ public:
      *  Currently only LwIPv4 is supported.
      */
     void create_interface(const char *server_address, void *handler = NULL) {
-    	printf("simpleClient - create_interface \r\n");
     	_server_address = server_address;
-    	uint16_t port = 0;//41000; // 9005 Newburry OpenLAB
+    	uint16_t listen_port = 0; // Network interface will randomize with port 0 defaul 5683
 
     	_interface = M2MInterfaceFactory::create_interface(*this,
                                                       	  MBED_ENDPOINT_NAME,       // endpoint name string
 														  "",                       // endpoint type string
 														  100,                      // lifetime
-														  port,                     // listen port
+														  listen_port,              // listen port
 														  MBED_DOMAIN,              // domain string
 														  SOCKET_MODE,              // binding mode
 														  M2MInterface::LwIP_IPv4,  // network stack
 														  "");
-    	//printf("Connecting to %s\r\n", _server_address);
+
+
+    	printf("Connecting to %s\r\n", server_address);
+
     	if(_interface) {
     		_interface->set_platform_network_handler(handler);
     	}
@@ -112,7 +116,7 @@ public:
 
 
 
-    // (5)
+    // (5) check private variable to see if the registration was sucessful or not
     bool register_successful() {
     	printf("simpleClient - register_successful \r\n");
         return _registered;
@@ -120,7 +124,7 @@ public:
 
 
 
-    // (6)
+    // (6) check private variable to see if un-registration was sucessful or not
     bool unregister_successful() {
     	printf("simpleClient - unregister_successful \r\n");
         return _unregistered;
@@ -129,9 +133,15 @@ public:
 
 
 
-    // (7) SECURITY OBJECT 0
+    /*
+     *  Creates register server object with mbed device server address and other parameters
+     *  required for client to connect to mbed device server.
+     */
 
     M2MSecurity* create_register_object() {
+    	// create security object using the interface factory.
+    	// this will generate a security ObjectID and ObjectInstance
+
     	printf("simpleClient - create_register_object \r\n");
         M2MSecurity *security = M2MInterfaceFactory::create_security(M2MSecurity::M2MServer);
 
@@ -157,7 +167,10 @@ public:
 
 
 
-    // (8) DEVICE OBJECT 3
+    /*
+     * Creates device object which contains mandatory resources linked with
+     * device endpoint.
+     */
 
     M2MDevice* create_device_object() {
     	printf("simpleClient - create_device_object \r\n");
@@ -223,7 +236,9 @@ public:
 
 
 
-    // (9) REGISTER FUNCTION
+    /*
+     * register an object
+     */
     void test_register(M2MSecurity *register_object, M2MObjectList object_list){
     	printf("simpleClient - test_register \r\n");
         if(_interface) {
@@ -234,7 +249,9 @@ public:
 
 
 
-    // (10) UNREGISTER FUNCTION
+    /*
+    * unregister all objects
+    */
     void test_unregister() {
     	printf("simpleClient - test_unregister \r\n");
         if(_interface) {
@@ -377,23 +394,8 @@ public:
      *  Object = 0x0, Resource = 0x1, ObjectInstance = 0x2, ResourceInstance = 0x3
      */
     void value_updated(M2MBase *base, M2MBase::BaseType type) {
-
     	printf("simpleClient - value_updated \r\n");
-        printf("PUT Request Received! \r\n");
-
-//        printf("%s \r\n",  base->name().c_str()  );
-//        printf("%d \r\n",  (int) base->name_id()  );
-//        printf("%d \r\n",  (int) base->instance_id()  );
-//        printf("%s \r\n",  base->interface_description().c_str()  );
-//        printf("%s \r\n",  base->resource_type().c_str()  );
-//        printf("%s \r\n",  (int) base->coap_content_type()  );
-//        printf("%d \r\n",  (int) base->is_observable() );
-
-//        printf("\r\nName :'%s', \r\nType : '%d' (0 for Object, 1 for Resource), \r\nType : '%s'\r\n",
-//               base->name().c_str(),
-//               type,
-//               base->resource_type().c_str()
-//               );
+        printf("PUT Request Received! \r\n\n\n\n\n");
     }
 
 

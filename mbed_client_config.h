@@ -20,12 +20,12 @@
 // Defines the number of times client should try re-connection towards
 // Server in case of connectivity loss , also defines the number of CoAP
 // re-transmission attempts.Default value is 3
-#define M2M_CLIENT_RECONNECTION_COUNT		3
+#define M2M_CLIENT_RECONNECTION_COUNT		0
 
 // Defines the interval (in seconds) in which client should try re-connection towards
 // Server in case of connectivity loss , also use the same interval for CoAP
 // re-transmission attempts. Default value is 5 seconds
-#define M2M_CLIENT_RECONNECTION_INTERVAL	5
+#define M2M_CLIENT_RECONNECTION_INTERVAL	30
 
 // Defines the keep-alive interval (in seconds) in which client should send keep alive
 // pings to server while connected through TCP mode. Default value is 300 seconds
